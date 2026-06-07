@@ -1,0 +1,7 @@
+[workspace]
+members = [
+    "../daemon",
+    "../coordinator",
+]
+exclude = []
+resolver = "2"

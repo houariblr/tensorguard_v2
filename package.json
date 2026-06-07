@@ -1,0 +1,22 @@
+{
+  "name": "tensorguard_v2",
+  "version": "1.0.0",
+  "description": "> Pre-execution AMM attack detection using Liquidity Tensor Field analysis.",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@coral-xyz/anchor": "^0.32.1",
+    "@solana/web3.js": "^1.98.4",
+    "@types/node": "^25.9.2",
+    "borsh": "^2.0.0",
+    "bs58": "^6.0.0",
+    "ts-node": "^10.9.2",
+    "tweetnacl": "^1.0.3",
+    "typescript": "^6.0.3"
+  }
+}

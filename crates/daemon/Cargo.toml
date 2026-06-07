@@ -1,0 +1,19 @@
+[workspace]
+resolver = "2"
+
+[package]
+name = "tensorguard-daemon"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "tgd"
+path = "src/main.rs"
+
+[dependencies]
+tensorguard-core = { path = "../core" }
+solana-sdk       = "1.18"
+solana-client    = "1.18"
+borsh            = "0.10"
+tokio            = { version = "1", features = ["full"] }
+shellexpand      = "2"

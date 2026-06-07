@@ -1,0 +1,10 @@
+[workspace]
+members = [
+    "crates/core",
+    "crates/multisig",
+]
+exclude = [
+    "crates/daemon",
+    "crates/coordinator",
+]
+resolver = "2"

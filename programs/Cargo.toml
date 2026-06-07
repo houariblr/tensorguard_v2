@@ -1,0 +1,3 @@
+[workspace]
+members = ["tensorguard"]
+resolver = "2"

@@ -1,0 +1,17 @@
+[workspace]
+resolver = "2"
+
+[package]
+name = "tensorguard-coordinator"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "tgc"
+path = "src/main.rs"
+
+[dependencies]
+solana-sdk    = "1.18"
+solana-client = "1.18"
+borsh         = "0.10"
+tokio         = { version = "1", features = ["full"] }
