@@ -1,78 +1,71 @@
 # TensorGuard
 
-> Pre-execution AMM attack detection using Liquidity Tensor Field analysis.
+> Pre-execution AMM attack detection using Liquidity Tensor Field analysis on Solana.
 
 Most AMM protocols protect themselves with a scalar invariant (`x · y = k`).
 This detects damage **after** it happens.
 
 TensorGuard replaces the scalar with a **5-dimensional tensor field** that tracks
-the geometry of liquidity in real time — and detects sandwich attacks, flash loans,
+the geometry of liquidity in real time — detecting sandwich attacks, flash loans,
 and price manipulation **before** the transaction executes.
 
 ---
 
-## Architecture
+## The Problem
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│  Off-chain Daemon (Rust)                                    │
-│                                                             │
-│  ┌─────────────┐   ┌──────────────┐   ┌─────────────────┐ │
-│  │PoolMonitor  │   │ MempoolMon.  │   │   TensorGuard   │ │
-│  │             │   │              │   │                 │ │
-│  │ polls RPC   │   │ Jito gRPC /  │   │ Lyapunov  L(T) │ │
-│  │ every 400ms │   │ RPC fallback │   │ Kolmogorov K(T)│ │
-│  └──────┬──────┘   └──────┬───────┘   │ Ricci     R(T) │ │
-│         │  confirmed state │ pending   └────────┬────────┘ │
-│         └──────────────────┘                    │          │
-│                         Predictor projects      │          │
-│                         swap → evaluates ───────┘          │
-│                                    │                        │
-│                         submit_vote() × N daemons          │
-│                         heartbeat()  every 20 slots        │
-└─────────────────────────────────────────────────────────────┘
-                              │
-                    Solana transactions
-                              │
-┌─────────────────────────────▼───────────────────────────────┐
-│  Anchor Program (Solana BPF)                                │
-│                                                             │
-│  initialize()      — deploy, set M/N multisig signers       │
-│  submit_vote()     — daemon posts verdict, auto-finalizes   │
-│  heartbeat()       — daemon liveness signal every ~8s       │
-│  guard_verify()    — AMM gate: PASS / REVERT / FALLBACK     │
-│  add_signer()      — rotate daemon set without redeploy     │
-│  remove_signer()   — remove compromised daemon              │
-│  set_threshold()   — update M in M/N                       │
-│  set_active()      — emergency toggle                       │
-└─────────────────────────────────────────────────────────────┘
+Standard AMM invariant: x · y = k  (one number)
+
+Attack executes → k changes → damage detected   ← too late
+
+TensorGuard:    T(x, y, t, v, ρ)  (5-dimensional field)
+
+Attack prepares → tensor distorts → detected before execution  ← on time
+```
+
+---
+
+## How It Works
+
+```
+Off-chain Daemon (Rust)
+─────────────────────────────────────────────────────────
+PoolMonitor        MempoolMonitor       TensorGuard Core
+polls RPC          Jito gRPC /          Lyapunov  L(T)
+every 400ms   +    RPC fallback    →    Kolmogorov K(T)
+                   pending swaps        Ricci      R(T)
+                        │
+                   Predictor: projects swap → evaluates tensor
+                        │
+                post_aggregated() → single Ed25519 signed attestation
+                heartbeat()       → daemon liveness every ~8s
+                        │
+                Solana transactions
+                        ▼
+Anchor Program (Solana BPF)
+─────────────────────────────────────────────────────────
+initialize()     — deploy, set M/N multisig signers
+post_aggregated()— coordinator posts FROST aggregated verdict
+heartbeat()      — daemon liveness signal
+guard_verify()   — AMM gate: PASS / REVERT / FALLBACK
+add_signer()     — rotate daemon set without redeploy
+remove_signer()  — remove compromised daemon
+set_threshold()  — update M in M/N
+set_active()     — emergency toggle
 ```
 
 ---
 
 ## The 3 Metrics
 
-| Metric | Formula | Attack signal |
+| Metric | What It Measures | Attack Signal |
 |---|---|---|
-| **Lyapunov** `L` | `velocity / baseline_velocity` | `> 5×` normal speed |
-| **Kolmogorov** `K` | z-score of price return | `> 3σ` outlier |
-| **Ricci** `R` | `observed_curvature / expected_curvature` | `> 3×` geometric tear |
+| **Lyapunov** `L(T)` | Kinetic energy of price velocity vs baseline | > 5× normal speed |
+| **Kolmogorov** `K(T)` | Z-score of current price return | > 3σ statistical outlier |
+| **Ricci** `R(T)` | Observed vs expected curvature on AMM curve | > 3× geometric deviation |
 
-Detection requires **2 of 3** metrics to fire — eliminates false positives.
-
----
-
-## Security Properties
-
-| Threat | Mechanism |
-|---|---|
-| **Single daemon compromised** | Multisig M/N — attacker needs M keys |
-| **Daemon key is a honeypot** | Rotate via `remove_signer` + `add_signer` without redeploy |
-| **Attack before daemon reacts** | Predictive: evaluates mempool swaps on projected state |
-| **DoS via daemon shutdown** | 3-path fallback — AMM runs unguarded after 200 slots silence |
-| **Replay attack** | Nonce strictly increasing per pool |
-| **Stale attestation** | VoteAccount expires after 40 slots (~16s) |
-| **Wrong pool spoofing** | VoteAccount PDA seeded by pool pubkey |
+Detection requires **2 of 3** metrics to fire simultaneously — eliminates false positives
+from normal high-volatility periods.
 
 ---
 
@@ -81,16 +74,44 @@ Detection requires **2 of 3** metrics to fire — eliminates false positives.
 ```
 guard_verify()
     │
-    ├─ VoteAccount fresh + finalized + Safe   → ✅ PASS
+    ├─ Attestation fresh + Safe    → ✅ PASS   (~500 CU)
     │
-    ├─ VoteAccount fresh + finalized + Attack → ❌ REVERT AttackDetected
+    ├─ Attestation fresh + Attack  → ❌ REVERT AttackDetected
     │
-    ├─ No VoteAccount + daemon alive          → ❌ REVERT NotFinalized
-    │   (daemon will catch up in ms)
+    ├─ No attestation + daemon alive → ❌ REVERT NotFinalized
+    │   (daemon catches up in milliseconds)
     │
-    └─ No VoteAccount + daemon silent > 200s  → ⚠️  PASS + FallbackEvent
-       (AMM stays live, operators alerted)
+    └─ No attestation + daemon silent > 200 slots → ⚠️  PASS + FallbackEvent
+       (AMM stays live, operators alerted on-chain)
 ```
+
+---
+
+## Security Properties
+
+| Threat | Mechanism |
+|---|---|
+| Single daemon compromised | Multisig M/N — attacker needs M keys |
+| Daemon keypair exposed | Rotate via `remove_signer` + `add_signer` without redeploy |
+| Attack before daemon reacts | Predictive: projects pending swap state, evaluates tensor |
+| DoS via daemon shutdown | 3-path fallback — AMM runs unguarded after 200 slots silence |
+| Replay attack | Nonce strictly increasing per pool |
+| Stale attestation | Expires after 40 slots (~16 seconds) |
+| Wrong pool spoofing | Attestation PDA seeded by pool pubkey |
+| Signature spoofing | Ed25519 instruction introspection verifies group_pubkey + pool |
+
+---
+
+## Compute Budget
+
+| Instruction | CU Cost |
+|---|---|
+| `post_aggregated` | ~3,200 |
+| `guard_verify` | ~500 |
+| `heartbeat` | ~1,500 |
+| **Total overhead per swap** | **~5,200 CU** |
+
+Raydium CPMM uses ~130,000 CU. Total with TensorGuard: **~135,200 CU** — safely under the 200,000 CU limit.
 
 ---
 
@@ -98,62 +119,91 @@ guard_verify()
 
 ```
 [ Normal trading — 30 swaps ]
-  Block   0 | price: 1.0020 | L:   0.00 | K:   0.00 | R:   0.00 | ✓  ok
-  Block  15 | price: 1.0490 | L:   0.84 | K:   1.20 | R:   1.00 | ✓  ok
-  Block  29 | price: 1.0962 | L:   0.73 | K:   1.10 | R:   1.00 | ✓  ok
+  Block   0 | price: 1.0020 | L:   0.00 | K:   0.00 | R: 1.00 | ✓  ok
+  Block  15 | price: 1.0490 | L:   0.84 | K:   1.20 | R: 1.00 | ✓  ok
+  Block  29 | price: 1.0962 | L:   0.73 | K:   1.10 | R: 1.00 | ✓  ok
 
 [ Sandwich Attack — front-run 20% of reserves ]
-  Block  32 | price: 1.5550 | L: 108.80 | K: 436.93 | R:   1.10 | ⚠️  ATTACK
+  Block  32 | price: 1.5550 | L: 108.80 | K: 436.93 | R: 1.10 | ⚠️  ATTACK
   Triggers: ["lyapunov", "kolmogorov"]
   Confidence: 78.8%
-```
 
 Zero false positives across 30 normal swaps.
-Attack detected with 78.8% confidence — before the block confirms.
+Attack detected with 78.8% confidence before the block confirms.
+```
+
+---
+
+## Live Demo — Solana Devnet
+
+| Account | Address |
+|---|---|
+| Program | `5pz6CWu6VmE3RuU1sAx7wVP43BxYkDTNCq4ZPECGFSBG` |
+| GuardConfig | `DLbMF6KkC5AE42yaNgKXpWB1yKnvGSRQnWVfk7N9Jcpf` |
+
+[View on Solana Explorer](https://explorer.solana.com/address/5pz6CWu6VmE3RuU1sAx7wVP43BxYkDTNCq4ZPECGFSBG?cluster=devnet)
+
+**Verified transactions:**
+
+| Test | TX |
+|---|---|
+| Safe swap → PASS | `3bQoia8H5D4uhSxJSSTeuQjWGStZB25n9vkJUrfu5tMc` |
+| Attack → REVERT | `2fQMzGBzj2XGxm8iNcqwudevK6CaE8YQvZqcm6XfTvvt` |
 
 ---
 
 ## Project Structure
 
 ```
-tensorguard/
-├── Cargo.toml                              Workspace root
+tensorguard_v2/
+│
+├── Cargo.toml                     Workspace root (core + multisig)
 │
 ├── crates/
-│   ├── core/                               Pure Rust math engine
+│   ├── core/                      Pure Rust math engine (no_std compatible)
 │   │   └── src/
-│   │       ├── lib.rs
 │   │       ├── tensor/
-│   │       │   ├── state.rs                LiquidityTensor (x, y, t, v, ρ)
-│   │       │   ├── lyapunov.rs             V(T) — velocity energy
-│   │       │   ├── kolmogorov.rs           K(T) — return z-score
-│   │       │   └── ricci.rs                R(T) — curvature deviation
+│   │       │   ├── state.rs       LiquidityTensor (x, y, t, velocity, density)
+│   │       │   ├── lyapunov.rs    V(T) — velocity energy ratio
+│   │       │   ├── kolmogorov.rs  K(T) — return z-score
+│   │       │   └── ricci.rs       R(T) — curvature deviation
 │   │       └── detector/
-│   │           └── threshold.rs            Triple-gate (2/3 majority)
+│   │           └── threshold.rs   Triple-gate 2/3 majority vote
 │   │
-│   └── daemon/                             Solana integration daemon
+│   ├── multisig/                  FROST-Ed25519 threshold signatures (RFC 9591)
+│   │   └── src/
+│   │       ├── keys.rs            Key generation (trusted dealer / DKG)
+│   │       ├── protocol.rs        Round 1, Round 2, Aggregation
+│   │       └── message.rs         Canonical attestation encoding
+│   │
+│   ├── daemon/                    Solana integration daemon
+│   │   └── src/
+│   │       ├── main.rs            2-phase loop (confirmed + predictive)
+│   │       ├── config.rs          Env-based configuration
+│   │       ├── monitor.rs         Confirmed pool state poller
+│   │       ├── mempool.rs         Pending tx monitor (Jito gRPC / RPC fallback)
+│   │       ├── predictor.rs       Project swap → tensor state
+│   │       ├── attestation.rs     Build + send post_aggregated tx
+│   │       └── heartbeat.rs       Daemon liveness signal
+│   │
+│   └── coordinator/               Off-chain FROST vote aggregator
 │       └── src/
-│           ├── main.rs                     Orchestrator — 2-phase loop
-│           ├── config.rs                   Env-based config
-│           ├── monitor.rs                  Confirmed pool state poller
-│           ├── mempool.rs                  Pending tx monitor (Jito/RPC)
-│           ├── predictor.rs                Project swap → tensor state
-│           ├── attestation.rs              Build + send submit_vote tx
-│           └── heartbeat.rs               Send liveness signal on-chain
+│           ├── aggregator.rs      Collect votes, majority verdict, aggregate sig
+│           └── main.rs            TCP server + simulation
 │
 └── programs/
-    └── tensorguard/                        Anchor program (Solana BPF)
+    └── tensorguard/               Anchor program (Solana BPF)
         └── src/
-            ├── lib.rs                      Program entry points
-            ├── state.rs                    GuardConfig, VoteAccount,
-            │                               PoolGuardState
-            ├── errors.rs                   Custom error codes
+            ├── lib.rs             Program entry points
+            ├── state.rs           GuardConfig, AggregatedAttestation, PoolGuardState
+            ├── errors.rs          Custom error codes
             └── instructions/
-                ├── initialize.rs           Deploy: M/N signers + threshold
-                ├── submit_vote.rs          Daemon vote → auto-finalize
-                ├── guard_verify.rs         AMM gate (3-path logic)
-                ├── heartbeat.rs            Daemon liveness
-                └── manage_signers.rs       add/remove/set_threshold
+                ├── initialize.rs          Deploy: M/N signers + group_pubkey
+                ├── post_aggregated.rs     FROST aggregated attestation
+                ├── guard_verify.rs        AMM gate — raw bytes, ~500 CU
+                ├── heartbeat.rs           Daemon liveness
+                ├── submit_vote.rs         Legacy: individual daemon votes
+                └── manage_signers.rs      add / remove / set_threshold
 ```
 
 ---
@@ -161,78 +211,95 @@ tensorguard/
 ## Getting Started
 
 ### Prerequisites
-- Rust 1.75+
-- Anchor CLI 0.29+
-- Solana CLI 1.18+
+
+```bash
+# Rust
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+
+# Solana CLI
+sh -c "$(curl -sSfL https://release.anza.xyz/stable/install)"
+
+# Node.js (for scripts)
+node --version  # >= 18
+npm install     # from project root
+```
 
 ### Build
 
 ```bash
-# Math engine only (no Solana deps)
+# Math engine
 cargo build -p tensorguard-core
+cargo build -p tensorguard-multisig
 
-# Full daemon
-cargo build --bin tgd
+# Daemon
+cd crates/daemon && cargo build --bin tgd
 
 # Anchor program
-anchor build
+cd programs
+cargo build-sbf --manifest-path tensorguard/Cargo.toml
+solana program deploy tensorguard/target/deploy/tensorguard.so
 ```
 
-### Deploy to Devnet
+### Initialize
 
 ```bash
-solana config set --url devnet
-anchor deploy
-### Deploy to Devnet
-
-Deployed on Solana Devnet:
-- **Program ID:** `7F6BwxRXzk887AFivMJbnsMcKqyaHBaB5bsbJvttkUq5`
-- **Explorer:** [View on Solana Explorer](https://explorer.solana.com/address/7F6BwxRXzk887AFivMJbnsMcKqyaHBaB5bsbJvttkUq5?cluster=devnet)
-
+# Set your program ID in programs/tensorguard/src/lib.rs first, then:
+node initialize.js
 ```
 
-### Initialize (2/3 multisig)
-
-```typescript
-await program.methods
-  .initialize(
-    [daemonA.publicKey, daemonB.publicKey, daemonC.publicKey],
-    2  // threshold: 2 of 3
-  )
-  .accounts({ guardConfig, authority })
-  .rpc();
-```
-
-### Run Daemon Nodes
+### Run Demo
 
 ```bash
-# Run 3 independent instances with different keypairs
-TGD_KEYPAIR=~/.config/solana/daemon_a.json \
-TGD_PROGRAM_ID=<PROGRAM_ID>               \
-TGD_POOL=<POOL_PUBKEY>                    \
-TGD_AUTHORITY=<AUTHORITY_PUBKEY>          \
-cargo run --bin tgd
+npm install tweetnacl
+node demo_full.js
 ```
 
-### Integrate into Your AMM
+### Run Tests
 
-```typescript
-// Add as FIRST instruction in every swap transaction
-const swapTx = new Transaction()
-  .add(
-    await program.methods.guardVerify()
-      .accounts({ pool, guardConfig, voteAccount, poolGuardState, caller })
-      .instruction()
-  )
-  .add(/* your swap instruction */);
+```bash
+node tests.js
+# Expected: 8/8 tests passed
 ```
 
 ---
 
+## Integration
 
-## Remaining
+Add `guard_verify` as the **first instruction** in every swap transaction:
 
-See [REMAINING.md](./REMAINING.md).
+```typescript
+const swapTx = new Transaction()
+  .add(
+    // 1. Ed25519 precompile (runtime verifies daemon signature)
+    Ed25519Program.createInstructionWithPublicKey({
+      publicKey: groupPubkey,
+      message:   attestationMessage,
+      signature: aggregatedSignature,
+    })
+  )
+  .add(
+    // 2. TensorGuard gate (~500 CU)
+    await program.methods.guardVerify()
+      .accounts({ pool, guardConfig, attestation, poolGuardState,
+                  instructionsSysvar, caller })
+      .instruction()
+  )
+  .add(
+    // 3. Your swap instruction
+    yourAmmSwapInstruction
+  );
+```
+
+---
+
+## Configuration
+
+See [CONSTANTS.md](./CONSTANTS.md) for all constants that must be set before deployment.
+
+Key values to configure:
+- `declare_id!()` — update after `solana program deploy`
+- `RESERVE_A_OFFSET` / `RESERVE_B_OFFSET` — match your target AMM layout
+- Detection thresholds — calibrate per pool volatility profile
 
 ---
 
