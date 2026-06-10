@@ -130,6 +130,16 @@ async fn main() {
             }
         }
 
-        tokio::time::sleep(Duration::from_millis(cfg.poll_interval_ms)).await;
+        // ── 3. Adaptive sleep — reduce CPU when pool is idle ──────────────────
+        // idle_count=0  → data changed     → poll fast  (400ms)
+        // idle_count=1  → 1 idle poll      → slow down  (800ms)
+        // idle_count=5+ → 5+ idle polls    → max backoff (2000ms)
+        let sleep_ms = match monitor.idle_count {
+            0      => cfg.poll_interval_ms,
+            1..=4  => cfg.poll_interval_ms * 2,
+            _      => cfg.poll_interval_ms * 5,
+        };
+
+        tokio::time::sleep(Duration::from_millis(sleep_ms)).await;
     }
 }

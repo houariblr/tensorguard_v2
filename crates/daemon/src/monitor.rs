@@ -2,11 +2,6 @@ use solana_client::rpc_client::RpcClient;
 use solana_sdk::pubkey::Pubkey;
 use tensorguard_core::PoolSnapshot;
 
-/// Raw reserve data extracted from a Raydium CPMM pool account.
-/// Layout (simplified): [discriminator:8][...][reserve_a:8][reserve_b:8][...]
-///
-/// For a real integration, parse the full account layout from the IDL.
-/// This offset targets Raydium CPMM token vault amounts.
 const RESERVE_A_OFFSET: usize = 253;
 const RESERVE_B_OFFSET: usize = 261;
 
@@ -15,6 +10,10 @@ pub struct PoolMonitor {
     pub pool: Pubkey,
     pub last_snapshot: Option<PoolSnapshot>,
     block_counter: u64,
+    /// Hash of last account data — skip processing if unchanged
+    last_data_hash: u64,
+    /// Consecutive idle polls — used for adaptive sleep signal
+    pub idle_count: u32,
 }
 
 impl PoolMonitor {
@@ -24,7 +23,20 @@ impl PoolMonitor {
             pool,
             last_snapshot: None,
             block_counter: 0,
+            last_data_hash: 0,
+            idle_count: 0,
         }
+    }
+
+    /// Fast hash of reserve bytes — avoid full processing if data unchanged
+    fn hash_reserves(data: &[u8]) -> u64 {
+        if data.len() < RESERVE_B_OFFSET + 8 {
+            return 0;
+        }
+        let a = u64::from_le_bytes(data[RESERVE_A_OFFSET..RESERVE_A_OFFSET+8].try_into().unwrap_or([0u8;8]));
+        let b = u64::from_le_bytes(data[RESERVE_B_OFFSET..RESERVE_B_OFFSET+8].try_into().unwrap_or([0u8;8]));
+        // Simple mix hash
+        a.wrapping_mul(0x9e3779b97f4a7c15).wrapping_add(b)
     }
 
     /// Fetch current pool state and return (prev, curr) snapshot pair if changed.
@@ -37,6 +49,16 @@ impl PoolMonitor {
             return None;
         }
 
+        // ── Fast path: skip if data unchanged ────────────────────────────────
+        let new_hash = Self::hash_reserves(&data);
+        if new_hash == self.last_data_hash {
+            self.idle_count = self.idle_count.saturating_add(1);
+            return None;
+        }
+        self.last_data_hash = new_hash;
+        self.idle_count = 0;
+
+        // ── Data changed — process ────────────────────────────────────────────
         let reserve_a = u64::from_le_bytes(
             data[RESERVE_A_OFFSET..RESERVE_A_OFFSET + 8].try_into().ok()?
         ) as u128;
@@ -52,11 +74,10 @@ impl PoolMonitor {
             reserve_x: reserve_a,
             reserve_y: reserve_b,
             block: slot,
-            timestamp: slot * 400, // ~400ms per slot on Solana
+            timestamp: slot * 400,
         };
 
         let result = self.last_snapshot.as_ref().map(|prev| {
-            // Only return if reserves actually changed
             if prev.reserve_x != curr.reserve_x || prev.reserve_y != curr.reserve_y {
                 Some((prev.clone(), curr.clone()))
             } else {
