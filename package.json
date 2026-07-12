@@ -1,22 +1,56 @@
 {
   "name": "tensorguard_v2",
   "version": "1.0.0",
-  "description": "> Pre-execution AMM attack detection using Liquidity Tensor Field analysis.",
-  "main": "index.js",
+  "description": "Pre-execution AMM attack detection using 5D Liquidity Tensor Field analysis on Solana",
+  "main": "demo.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "init": "node initialize.js",
+    "heartbeat": "node heartbeat.js",
+    "post-safe": "node post_aggregated.js",
+    "post-attack": "node post_aggregated_attack.js",
+    "verify": "node guard_verify.js",
+    "demo": "node demo.js",
+    "demo-full": "node demo_full.js",
+    "test": "node tests.js",
+    "scan": "node scanner.js",
+    "lint": "echo 'Add eslint later'",
+    "clean": "rm -f post_aggregated_attack.js"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
+  "keywords": [
+    "solana",
+    "defi",
+    "security",
+    "amm",
+    "sandwich-attack",
+    "flash-loan",
+    "tensor-field",
+    "liquidity-guard",
+    "mev-protection",
+    "anchor"
+  ],
+  "author": "houariblr",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/houariblr/tensorguard_v2.git"
+  },
+  "bugs": {
+    "url": "https://github.com/houariblr/tensorguard_v2/issues"
+  },
+  "homepage": "https://github.com/houariblr/tensorguard_v2#readme",
+  "engines": {
+    "node": ">=18.0.0"
+  },
   "dependencies": {
     "@coral-xyz/anchor": "^0.32.1",
     "@solana/web3.js": "^1.98.4",
-    "@types/node": "^25.9.2",
     "borsh": "^2.0.0",
     "bs58": "^6.0.0",
+    "tweetnacl": "^1.0.3"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
     "ts-node": "^10.9.2",
-    "tweetnacl": "^1.0.3",
-    "typescript": "^6.0.3"
+    "typescript": "^5.5.0"
   }
 }
