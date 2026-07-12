@@ -1,3 +1,5 @@
+<img width="2110" height="1216" alt="demo" src="https://github.com/user-attachments/assets/eebbd6a4-97a8-4123-a072-2e4e697b3daa" />
+<img width="2110" height="1216" alt="demo" src="https://github.com/user-attachments/assets/eb8f4fac-b97e-43cc-97a4-4cab90ffc7fc" />
 ## The Problem
 
 Standard AMMs protect themselves with a scalar invariant (`x · y = k`). This detects damage **after** it happens — when the attacker has already extracted value.
