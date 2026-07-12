@@ -1,4 +1,4 @@
-# Remaining
+# TensorGuard — Remaining Work
 
 ## ✅ Done
 
@@ -16,8 +16,7 @@
 - [x] PoolGuardState — daemon liveness tracking per pool
 - [x] initialize() — deploy with signers + threshold
 - [x] submit_vote() — daemon verdict, auto-finalize
-- [x] post_aggregated() — Ed25519 FROST aggregated signature verification
-- [x] guard_verify() — 3-path logic (safe / attack / fallback)
+- [x] guard_verify() — 3-path logic (PASS / REVERT / FALLBACK)
 - [x] heartbeat() — daemon liveness signal
 - [x] manage_signers() — add / remove / set_threshold
 
@@ -26,46 +25,44 @@
 - [x] PoolMonitor — confirmed state poller
 - [x] MempoolMonitor — Jito stub + RPC fallback
 - [x] Predictor — project pool state from pending swap
-- [x] AttestationSender — submit_vote + post_aggregated transaction builder
+- [x] AttestationSender — submit_vote transaction builder
 - [x] Heartbeat sender
 - [x] 2-phase main loop (confirmed + predictive)
 
-### Security
-- [x] Multisig daemon (Problem 1 — Honeypot)
-- [x] Predictive attestation from mempool (Problem 2 — Latency)
-- [x] DoS fallback + FallbackEvent (Problem 3 — DoS)
+### Security Properties
+- [x] Multisig daemon — M/N threshold, honeypot-resistant
+- [x] Predictive attestation from mempool — low latency
+- [x] DoS fallback + FallbackEvent — AMM stays live if daemon is silent
 
-### On-chain Demo (Solana Devnet)
-- [x] Program deployed: `5pz6CWu6VmE3RuU1sAx7wVP43BxYkDTNCq4ZPECGFSBG`
-- [x] initialize() TX: `p9Dog...R4F4R6RktUzzeazW8Q1aBXnDeMYoG`
-- [x] heartbeat() TX: Pool `FBg8i1mBnv6ax1UPam8BeJXAGJn4THXJDtVRiFNd78fg`
-- [x] post_aggregated Safe TX: `3bQoia8H5D4uhSxJSSTeuQjWGStZB25n9vkJUrfu5tMc`
-- [x] guard_verify PASS TX: `2kuVZxmGx4jGg9eeHhYvDnSbiPvJL5rSu3ERAtj1ezFB`
-- [x] post_aggregated Attack TX: `2fQMzGBzj2XGxm8iNcqwudevK6CaE8YQvZqcm6XfTvvt`
-- [x] guard_verify REVERT (AttackDetected): confirmed via simulation
-- [x] guard_verify FALLBACK TX: `51ifHFjjJhPBXgFp2a3eM4NRPSsvjn3LXeb8VR9opsfe`
+### Deployment
+- [x] Deployed to Solana Devnet
+- [x] Program ID: `5pz6CWu6VmE3RuU1sAx7wVP43BxYkDTNCq4ZPECGFSBG`
+- [x] End-to-end demo: daemon → attestation → guard_verify (demo.js)
+- [x] Public GitHub repo: https://github.com/houariblr/tensorguard_v2
 
 ---
 
 ## 🔧 Remaining
 
-### Problem 4 — False Positives (next)
-- [ ] Monitoring-only mode (shadow mode — log without blocking)
-- [ ] Volatility-aware thresholds (auto-scale during news events)
-- [ ] Per-pool calibration from historical data
+### Problem 4 — False Positives
+- [ ] Monitoring-only / shadow mode (log without blocking)
+- [ ] Volatility-aware thresholds (auto-scale during high-volatility events)
+- [ ] Per-pool calibration from historical baseline data
 
-### Problem 5 — Adoption (after)
-- [ ] Wrapper program — wraps immutable AMMs via CPI
+### Problem 5 — Adoption
+- [ ] Wrapper program — wraps immutable AMMs via CPI (no fork needed)
 - [ ] TypeScript SDK — single import for AMM integration
+- [ ] Integration guide for Raydium / Orca / Meteora
 
 ### Technical Debt
-- [ ] Real Raydium pool layout parser (fix hardcoded byte offsets in monitor.rs)
-- [ ] Jito gRPC wiring (tonic client in mempool.rs)
+- [ ] Real Raydium pool layout parser (replace hardcoded byte offsets in monitor.rs)
+- [ ] Jito gRPC wiring (tonic client in mempool.rs — currently stub)
 - [ ] Nonce persistence across daemon restarts
-- [ ] Anchor tests (normal flow, attack blocked, stale, replay, fallback)
+- [ ] Anchor tests: normal flow, attack blocked, stale attestation, replay, fallback
+- [ ] Remove shellexpand dependency from daemon Cargo.toml
 
-### Grant
-- [x] Public GitHub repo
-- [x] Live demo (devnet) — all 3 guard_verify paths verified on-chain
-- [ ] AI subscription receipt ($200)
-- [ ] Second tranche submission
+### Roadmap
+- [ ] Live demo URL with recorded video
+- [ ] Mainnet deployment
+- [ ] Multi-pool support (currently single pool per daemon instance)
+- [ ] Dashboard UI (real-time threat feed)
